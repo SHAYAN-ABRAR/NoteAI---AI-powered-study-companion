@@ -1,5 +1,5 @@
 import streamlit as st
-from api_calling import note_generator, audio_transcription, quiz_generator, flashcard_generator, key_points_extractor, extract_correct_answers
+from api_calling import note_generator, audio_transcription, quiz_generator, flashcard_generator, key_points_extractor, extract_correct_answers, parse_quiz_json
 from PIL import Image
 import re
 
@@ -203,7 +203,7 @@ if pressed:
                 
                 # Display notes with better formatting
                 st.markdown(f"""
-                    <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #667eea;'>
+                    <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #667eea; color: #333333;'>
                     {generated_notes}
                     </div>
                 """, unsafe_allow_html=True)
@@ -288,21 +288,29 @@ if pressed:
             if not st.session_state.quiz_submitted:
                 st.info(f"**Total Questions: {len(parsed_questions)}** (Answer all and click Submit)")
                 
+                def update_answer(idx):
+                    """Callback to safely update answer selection"""
+                    selected = st.session_state[f"quiz_q_{idx}"]
+                    if selected:
+                        st.session_state.user_answers[idx] = selected[0]  # A, B, C, or D
+                
                 for idx, q in enumerate(parsed_questions):
                     st.markdown(f"### Question {idx + 1}")
                     st.write(f"**{q['question']}**")
                     
                     option_list = [f"{key}) {value}" for key, value in q['options'].items()]
                     
-                    selected = st.radio(
+                    # Initialize session state for this question if not exists
+                    if f"quiz_q_{idx}" not in st.session_state:
+                        st.session_state[f"quiz_q_{idx}"] = None
+                    
+                    st.radio(
                         label=f"Choose answer for Question {idx + 1}",
                         options=option_list,
                         key=f"quiz_q_{idx}",
-                        label_visibility="collapsed"
+                        label_visibility="collapsed",
+                        on_change=lambda idx=idx: update_answer(idx)
                     )
-                    
-                    if selected:
-                        st.session_state.user_answers[idx] = selected[0]  # A, B, C, or D
                     
                     st.divider()
                 
@@ -380,7 +388,7 @@ if pressed:
                     
                     if flashcards:
                         st.markdown(f"""
-                            <div style='background-color: #fff3cd; padding: 20px; border-radius: 10px; border-left: 5px solid #ffc107;'>
+                            <div style='background-color: #fff3cd; padding: 20px; border-radius: 10px; border-left: 5px solid #ffc107; color: #333333;'>
                             {flashcards}
                             </div>
                         """, unsafe_allow_html=True)
@@ -413,7 +421,7 @@ if pressed:
                     
                     if key_points:
                         st.markdown(f"""
-                            <div style='background-color: #e7f3ff; padding: 20px; border-radius: 10px; border-left: 5px solid #2196F3;'>
+                            <div style='background-color: #e7f3ff; padding: 20px; border-radius: 10px; border-left: 5px solid #2196F3; color: #333333;'>
                             {key_points}
                             </div>
                         """, unsafe_allow_html=True)
@@ -432,7 +440,7 @@ if pressed:
         
         st.divider()
         st.markdown("""
-            <div style='text-align: center; background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-top: 2rem;'>
+            <div style='text-align: center; background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-top: 2rem; color: #333333;'>
             <h3>🎓 Study Tips</h3>
             <p><strong>1. Review Notes First:</strong> Start with the comprehensive notes summary</p>
             <p><strong>2. Listen to Audio:</strong> Reinforce learning with audio version</p>
