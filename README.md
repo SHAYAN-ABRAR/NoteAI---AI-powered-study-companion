@@ -6,7 +6,7 @@ Transform handwritten notes into comprehensive study materials using AI-powered 
 
 - **📝 AI-Generated Notes** - Automatic note summarization in Bengali/English
 - **🔊 Audio Learning** - Text-to-speech in multiple languages
-- **🧠 Interactive Quizzes** - Auto-generated 3-question quizzes with instant feedback
+- **🧠 Interactive Quizzes** - Auto-generated 5-question quizzes with instant feedback
 - **📇 Smart Flashcards** - Quick Q&A pairs for memorization
 - **⭐ Key Points Extraction** - Highlights important concepts
 - **🌐 Bilingual Support** - Bengali & English language toggle
@@ -15,7 +15,7 @@ Transform handwritten notes into comprehensive study materials using AI-powered 
 ## 🛠️ Tech Stack
 
 - **Frontend:** Streamlit (Python UI framework)
-- **AI/ML:** Google Gemini API (text generation)
+- **AI/ML:** Ollama local vision model (image understanding + text generation)
 - **Audio:** gTTS (Google Text-to-Speech)
 - **Image Processing:** Pillow
 - **Data:** Pandas, NumPy
@@ -28,11 +28,19 @@ pip install -r requirements.txt
 ```
 
 ### Setup
-1. Get your [Gemini API key](https://ai.google.dev)
-2. Create `.env` file:
+1. Install and start [Ollama](https://ollama.com)
+2. Pull a vision-capable model, for example:
+```bash
+ollama pull minicpm-v
 ```
-GEMINI_API_KEY=your_api_key_here
+3. Create `.env` file:
 ```
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=minicpm-v:latest
+OLLAMA_TIMEOUT=240
+OLLAMA_IMAGE_MAX_SIZE=1280
+```
+The app also lets you choose from installed Ollama models in the sidebar when Ollama is running.
 
 ### Run
 ```bash
@@ -55,11 +63,11 @@ python -m streamlit run app.py
 - ✅ Error handling & user-friendly feedback
 - ✅ Session state management for smooth UX
 - ✅ Professional UI with custom CSS styling
-- ✅ Automatic API quota error handling
+- ✅ Local Ollama connection error handling
 
 ## 📊 API Limits
 
-Google Gemini Free Tier: 20 requests/day
+Ollama runs locally, so there is no cloud API quota. Speed depends on your machine and selected model.
 
 ## 🎓 Use Cases
 
@@ -78,10 +86,3 @@ Google Gemini Free Tier: 20 requests/day
 - [ ] Mobile app version
 - [ ] More languages
 
-## 📝 License
-
-Open source - feel free to use and modify
-
----
-
-**Created with ❤️ for students and learners**

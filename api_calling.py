@@ -1,24 +1,130 @@
-from google import genai
 from dotenv import load_dotenv
+import base64
 import os, io
 from gtts import gTTS
 import streamlit as st
 import re
 import json
+import requests
+from PIL import Image
 
 # ============== ENVIRONMENT SETUP ==============
 load_dotenv()
 
-my_api_key = os.getenv("GEMINI_API_KEY")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llava")
 
-if not my_api_key:
-    raise ValueError("❌ GEMINI_API_KEY not found in .env file")
+try:
+    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+except ValueError:
+    OLLAMA_TIMEOUT = 120
 
-# Initialize client
-client = genai.Client(api_key=my_api_key)
+try:
+    OLLAMA_IMAGE_MAX_SIZE = int(os.getenv("OLLAMA_IMAGE_MAX_SIZE", "1280"))
+except ValueError:
+    OLLAMA_IMAGE_MAX_SIZE = 1280
+
+try:
+    OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "700"))
+except ValueError:
+    OLLAMA_NUM_PREDICT = 700
+
+
+def _image_to_base64(image):
+    """
+    Convert a PIL image to base64 for Ollama's vision API.
+    """
+    image_to_save = image.copy()
+
+    if OLLAMA_IMAGE_MAX_SIZE > 0:
+        image_to_save.thumbnail(
+            (OLLAMA_IMAGE_MAX_SIZE, OLLAMA_IMAGE_MAX_SIZE),
+            Image.Resampling.LANCZOS,
+        )
+
+    if image_to_save.mode in ("RGBA", "LA"):
+        background = Image.new("RGB", image_to_save.size, "white")
+        alpha = image_to_save.getchannel("A")
+        background.paste(image_to_save, mask=alpha)
+        image_to_save = background
+    elif image_to_save.mode != "RGB":
+        image_to_save = image_to_save.convert("RGB")
+
+    buffer = io.BytesIO()
+    image_to_save.save(buffer, format="JPEG", quality=85, optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def get_ollama_models():
+    """
+    Return locally installed Ollama model names, or an empty list if Ollama is offline.
+    """
+    try:
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+        response.raise_for_status()
+        models = response.json().get("models", [])
+        return [model["name"] for model in models if model.get("name")]
+    except requests.exceptions.RequestException:
+        return []
+
+
+def _ollama_generate(prompt, images=None, response_format=None, model=None, num_predict=None):
+    """
+    Generate text using a local Ollama model.
+    """
+    payload = {
+        "model": model or OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.2,
+            "num_predict": num_predict or OLLAMA_NUM_PREDICT,
+        },
+    }
+
+    if images:
+        payload["images"] = [_image_to_base64(image) for image in images]
+
+    if response_format:
+        payload["format"] = response_format
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            json=payload,
+            timeout=OLLAMA_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json().get("response", "").strip()
+    except requests.exceptions.ConnectionError as exc:
+        raise RuntimeError(
+            f"Could not connect to Ollama at {OLLAMA_BASE_URL}. "
+            "Start Ollama and make sure a vision-capable model is installed."
+        ) from exc
+    except requests.exceptions.Timeout as exc:
+        raise RuntimeError(
+            f"Ollama timed out after {OLLAMA_TIMEOUT} seconds. "
+            "Try a smaller image, a faster model, or increase OLLAMA_TIMEOUT."
+        ) from exc
+    except requests.exceptions.HTTPError as exc:
+        try:
+            detail = response.json().get("error") or response.text.strip()
+        except ValueError:
+            detail = response.text.strip() if response.text else str(exc)
+
+        active_model = model or OLLAMA_MODEL
+        if "not found" in detail.lower() and active_model in detail:
+            detail = (
+                f"Model '{active_model}' is not installed in Ollama. "
+                f"Run 'ollama pull {active_model}' or select an installed model from the sidebar."
+            )
+
+        raise RuntimeError(f"Ollama request failed: {detail}") from exc
+    except ValueError as exc:
+        raise RuntimeError("Ollama returned an invalid JSON response.") from exc
 
 # ============== NOTE GENERATOR ==============
-def note_generator(images, language="Bengali"):
+def note_generator(images, language="Bengali", model=None):
     """
     Generate comprehensive notes from images
     """
@@ -42,11 +148,7 @@ def note_generator(images, language="Bengali"):
         Use markdown for clarity and proper formatting."""
     
     try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=[*images, prompt]
-        )
-        return response.text
+        return _ollama_generate(prompt, images, model=model, num_predict=500)
     except Exception as e:
         st.error(f"❌ Error generating notes: {str(e)}")
         return "Unable to generate notes. Please try again."
@@ -68,7 +170,7 @@ def audio_transcription(text, language="Bengali"):
         return None
 
 # ============== QUIZ GENERATOR ==============
-def quiz_generator(images, difficulty, language="Bengali"):
+def quiz_generator(images, difficulty, language="Bengali", model=None):
     """
     Generate 5 multiple-choice questions and return structured JSON (reliable parsing)
     """
@@ -129,18 +231,14 @@ Format exactly:
 Make questions clear, options plausible, and explanations educational."""
 
     try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=[*images, prompt]
-        )
-        return response.text
+        return _ollama_generate(prompt, images, response_format="json", model=model, num_predict=1100)
     except Exception as e:
         st.error(f"❌ Error generating quiz: {str(e)}")
         return None
 
 # ============== ADDITIONAL FEATURES ==============
 
-def flashcard_generator(images, language="Bengali"):
+def flashcard_generator(images, language="Bengali", model=None):
     """
     Generate flashcard-style Q&A pairs for quick review
     """
@@ -160,16 +258,12 @@ def flashcard_generator(images, language="Bengali"):
         Make them concise and perfect for studying."""
     
     try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=[*images, prompt]
-        )
-        return response.text
+        return _ollama_generate(prompt, images, model=model, num_predict=600)
     except Exception as e:
         st.error(f"❌ Error generating flashcards: {str(e)}")
         return None
 
-def key_points_extractor(images, language="Bengali"):
+def key_points_extractor(images, language="Bengali", model=None):
     """
     Extract key points and bullet points for quick reference
     """
@@ -191,11 +285,7 @@ def key_points_extractor(images, language="Bengali"):
         Keep it concise and organized."""
     
     try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=[*images, prompt]
-        )
-        return response.text
+        return _ollama_generate(prompt, images, model=model, num_predict=500)
     except Exception as e:
         st.error(f"❌ Error extracting key points: {str(e)}")
         return None
@@ -222,7 +312,7 @@ def extract_correct_answers(quiz_content):
 
 def parse_quiz_json(raw_text):
     """
-    Safely parse JSON output from Gemini
+    Safely parse JSON output from Ollama
     """
     if not raw_text:
         return []

@@ -1,5 +1,5 @@
 import streamlit as st
-from api_calling import note_generator, audio_transcription, quiz_generator, flashcard_generator, key_points_extractor, extract_correct_answers, parse_quiz_json
+from api_calling import OLLAMA_MODEL, get_ollama_models, note_generator, audio_transcription, quiz_generator, flashcard_generator, key_points_extractor, extract_correct_answers, parse_quiz_json
 from PIL import Image
 import re
 
@@ -85,6 +85,8 @@ if 'quiz_submitted' not in st.session_state:
     st.session_state.quiz_submitted = False
 if 'language' not in st.session_state:
     st.session_state.language = "Bengali"
+if 'ollama_model' not in st.session_state:
+    st.session_state.ollama_model = OLLAMA_MODEL
 if 'user_answers' not in st.session_state:
     st.session_state.user_answers = {}
 if 'current_quiz' not in st.session_state:
@@ -116,6 +118,49 @@ with st.sidebar:
         help="Choose your preferred language"
     )
     st.session_state.language = "Bengali" if "Bengali" in language_option else "English"
+
+    st.subheader("Ollama Model")
+    available_models = get_ollama_models()
+    current_model = st.session_state.ollama_model or OLLAMA_MODEL
+
+    if available_models:
+        preferred_candidates = [
+            OLLAMA_MODEL,
+            "minicpm-v:latest",
+            "minicpm-v",
+            "moondream:latest",
+            "moondream",
+            "llava:latest",
+            "llava",
+            "bakllava:latest",
+            "bakllava",
+        ]
+        preferred_model = next((name for name in preferred_candidates if name in available_models), None)
+        vision_markers = ("moondream", "llava", "bakllava", "minicpm", "qwen2.5vl", "gemma3")
+        selected_model_looks_visual = any(marker in current_model.lower() for marker in vision_markers)
+
+        if preferred_model and (current_model not in available_models or not selected_model_looks_visual):
+            st.info(f"Using vision model '{preferred_model}' for uploaded images.")
+            current_model = preferred_model
+            st.session_state.ollama_model = current_model
+        elif current_model not in available_models:
+            st.warning(f"Configured model '{current_model}' is not installed. Using '{available_models[0]}' instead.")
+            current_model = available_models[0]
+            st.session_state.ollama_model = current_model
+
+        st.session_state.ollama_model = st.selectbox(
+            "Select Local Model",
+            available_models,
+            index=available_models.index(current_model),
+            help="Use a vision-capable Ollama model for uploaded note images."
+        )
+        st.caption("Uploaded note images need a vision-capable model, such as llava or another Ollama vision model.")
+    else:
+        st.session_state.ollama_model = st.text_input(
+            "Model Name",
+            value=current_model,
+            help="Start Ollama to auto-detect installed models. Image uploads need a vision-capable model."
+        ).strip() or OLLAMA_MODEL
     
     st.divider()
     
@@ -199,7 +244,7 @@ if pressed:
             st.subheader("📝 AI-Generated Notes Summary")
             
             with st.spinner("✨ AI is analyzing your notes..."):
-                generated_notes = note_generator(pil_images, st.session_state.language)
+                generated_notes = note_generator(pil_images, st.session_state.language, st.session_state.ollama_model)
                 
                 # Display notes with better formatting
                 st.markdown(f"""
@@ -265,7 +310,7 @@ if pressed:
             # Generate quiz only once
             if st.session_state.current_quiz_raw is None:
                 with st.spinner("📋 Generating 5 quiz questions..."):
-                    raw_quiz = quiz_generator(pil_images, difficulty, st.session_state.language)
+                    raw_quiz = quiz_generator(pil_images, difficulty, st.session_state.language, st.session_state.ollama_model)
                     if raw_quiz:
                         st.session_state.current_quiz_raw = raw_quiz
                         st.session_state.parsed_questions = parse_quiz_json(raw_quiz)
@@ -384,7 +429,7 @@ if pressed:
                 st.info("Perfect for quick revision and memorization")
                 
                 with st.spinner("🎴 Generating flashcards..."):
-                    flashcards = flashcard_generator(pil_images, st.session_state.language)
+                    flashcards = flashcard_generator(pil_images, st.session_state.language, st.session_state.ollama_model)
                     
                     if flashcards:
                         st.markdown(f"""
@@ -417,7 +462,7 @@ if pressed:
                 st.info("Quick reference for important concepts and formulas")
                 
                 with st.spinner("📌 Extracting key points..."):
-                    key_points = key_points_extractor(pil_images, st.session_state.language)
+                    key_points = key_points_extractor(pil_images, st.session_state.language, st.session_state.ollama_model)
                     
                     if key_points:
                         st.markdown(f"""
