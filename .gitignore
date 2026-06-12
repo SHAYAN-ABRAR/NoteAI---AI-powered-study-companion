@@ -27,10 +27,9 @@ wheels/
 .installed.cfg
 *.egg
 
-# Streamlit
+# Streamlit (config.toml is committed for theming; secrets stay local)
 .streamlit/secrets.toml
 .streamlit/cache/
-.streamlit/
 
 # IDE
 .vscode/

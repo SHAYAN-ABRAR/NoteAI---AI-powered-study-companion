@@ -55,9 +55,11 @@ def _image_to_base64(image):
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
+@st.cache_data(ttl=30, show_spinner=False)
 def get_ollama_models():
     """
     Return locally installed Ollama model names, or an empty list if Ollama is offline.
+    Cached for 30s so widget interactions don't trigger a network call on every rerun.
     """
     try:
         response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
@@ -135,8 +137,9 @@ def note_generator(images, language="Bengali", model=None):
         2. **মূল ধারণা** (Key Concepts) 
         3. **গুরুত্বপূর্ণ পয়েন্ট** (Important Points)
         4. **সংক্ষিপ্ত সারসংক্ষেপ** (Summary)
-        
-        Use markdown for clarity and proper formatting."""
+
+        Use markdown for clarity and proper formatting.
+        Use **bold text** for section titles. Do not use '#' heading syntax."""
     else:  # English
         prompt = """Summarize the pictures in detailed note format in English language (max 300 words).
         Structure your response with:
@@ -144,8 +147,9 @@ def note_generator(images, language="Bengali", model=None):
         2. **Key Concepts** 
         3. **Important Points**
         4. **Summary**
-        
-        Use markdown for clarity and proper formatting."""
+
+        Use markdown for clarity and proper formatting.
+        Use **bold text** for section titles. Do not use '#' heading syntax."""
     
     try:
         return _ollama_generate(prompt, images, model=model, num_predict=500)
