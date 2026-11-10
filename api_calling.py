@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import base64
 import os, io
+from urllib.parse import urlparse
 from gtts import gTTS
 import streamlit as st
 import re
@@ -8,11 +9,60 @@ import json
 import requests
 from PIL import Image
 
+import offline_mode
+
 # ============== ENVIRONMENT SETUP ==============
 load_dotenv()
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llava")
+OLLAMA_CLOUD_URL = "https://ollama.com"
+DEFAULT_CLOUD_MODEL = "gemma4:31b"
+
+
+def _setting(name, default=""):
+    """Read a setting from Streamlit secrets (hosted apps) or the environment / .env."""
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name]).strip()
+    except Exception:  # no secrets file: local runs use .env / environment variables
+        pass
+    return os.getenv(name, default).strip()
+
+
+def _host_setting():
+    host = _setting("OLLAMA_BASE_URL")
+    if host:
+        return host
+    # OLLAMA_HOST is also the Ollama daemon's own bind setting (e.g. "0.0.0.0"),
+    # so only use it here when it is a full URL.
+    host = _setting("OLLAMA_HOST")
+    return host if host.startswith(("http://", "https://")) else ""
+
+
+# With an API key the app talks to Ollama Cloud (or OLLAMA_BASE_URL, if set);
+# without one it uses a local Ollama server, and offline mode if none is running.
+OLLAMA_API_KEY = _setting("OLLAMA_API_KEY")
+OLLAMA_BASE_URL = (_host_setting() or (OLLAMA_CLOUD_URL if OLLAMA_API_KEY else "http://localhost:11434")).rstrip("/")
+
+
+def _is_ollama_cloud(url=None):
+    host = urlparse(url or OLLAMA_BASE_URL).hostname or ""
+    return host == "ollama.com" or host.endswith(".ollama.com")
+
+
+def normalize_model_name(model):
+    """ollama.com names cloud models without the local '-cloud' suffix (gemma4:31b-cloud -> gemma4:31b)."""
+    model = (model or "").strip()
+    if _is_ollama_cloud() and model.endswith("-cloud"):
+        model = model[: -len("-cloud")]
+    return model
+
+
+OLLAMA_MODEL = normalize_model_name(_setting("OLLAMA_MODEL") or (DEFAULT_CLOUD_MODEL if OLLAMA_API_KEY else "llava"))
+
+
+def _auth_headers():
+    return {"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else {}
+
 
 try:
     OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
@@ -56,27 +106,74 @@ def _image_to_base64(image):
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def get_ollama_models():
+def _probe_ollama(base_url, use_key):
     """
-    Return locally installed Ollama model names, or an empty list if Ollama is offline.
+    Return (reachable, model names, error) for the configured Ollama server.
     Cached for 30s so widget interactions don't trigger a network call on every rerun.
     """
     try:
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+        response = requests.get(
+            f"{base_url}/api/tags",
+            headers=_auth_headers() if use_key else {},
+            timeout=6 if use_key else 3,
+        )
         response.raise_for_status()
         models = response.json().get("models", [])
-        return [model["name"] for model in models if model.get("name")]
-    except requests.exceptions.RequestException:
-        return []
+        return True, [model["name"] for model in models if model.get("name")], None
+    except requests.exceptions.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "error"
+        return False, [], f"HTTP {status}"
+    except requests.exceptions.RequestException as exc:
+        return False, [], type(exc).__name__
+    except ValueError:
+        return False, [], "invalid response"
+
+
+def get_ollama_models():
+    """
+    Return the model names on the configured Ollama server (local, or Ollama Cloud
+    when OLLAMA_API_KEY is set), or an empty list if it can't be reached.
+    """
+    return _probe_ollama(OLLAMA_BASE_URL, bool(OLLAMA_API_KEY))[1]
+
+
+def get_ai_status():
+    """
+    Which AI path the app is using:
+      "cloud"   - OLLAMA_API_KEY is set and the server answered
+      "local"   - a local (or self-hosted) Ollama server answered
+      "offline" - no model reachable; offline_mode reads the photos on-device
+    """
+    reachable, models, error = _probe_ollama(OLLAMA_BASE_URL, bool(OLLAMA_API_KEY))
+    if reachable:
+        mode = "cloud" if OLLAMA_API_KEY else "local"
+    else:
+        mode = "offline"
+    return {
+        "mode": mode,
+        "key_configured": bool(OLLAMA_API_KEY),
+        "is_ollama_cloud": _is_ollama_cloud(),
+        "host": OLLAMA_BASE_URL,
+        "models": models,
+        "error": error,
+        "ocr": offline_mode.ocr_available(),
+    }
 
 
 def _ollama_generate(prompt, images=None, response_format=None, model=None, num_predict=None):
     """
-    Generate text using a local Ollama model.
+    Generate text with the configured Ollama model (local server or Ollama Cloud).
+    Uses /api/chat, which both a local Ollama server and ollama.com support.
     """
+    active_model = normalize_model_name(model or OLLAMA_MODEL)
+    message = {"role": "user", "content": prompt}
+
+    if images:
+        message["images"] = [_image_to_base64(image) for image in images]
+
     payload = {
-        "model": model or OLLAMA_MODEL,
-        "prompt": prompt,
+        "model": active_model,
+        "messages": [message],
         "stream": False,
         "options": {
             "temperature": 0.2,
@@ -84,28 +181,27 @@ def _ollama_generate(prompt, images=None, response_format=None, model=None, num_
         },
     }
 
-    if images:
-        payload["images"] = [_image_to_base64(image) for image in images]
-
     if response_format:
         payload["format"] = response_format
 
+    where = "Ollama Cloud" if _is_ollama_cloud() else f"Ollama at {OLLAMA_BASE_URL}"
+
     try:
         response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
+            f"{OLLAMA_BASE_URL}/api/chat",
             json=payload,
+            headers=_auth_headers(),
             timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
-        return response.json().get("response", "").strip()
+        content = (response.json().get("message") or {}).get("content", "").strip()
     except requests.exceptions.ConnectionError as exc:
-        raise RuntimeError(
-            f"Could not connect to Ollama at {OLLAMA_BASE_URL}. "
-            "Start Ollama and make sure a vision-capable model is installed."
-        ) from exc
+        hint = ("Check the internet connection." if OLLAMA_API_KEY
+                else "Start Ollama and make sure a vision-capable model is installed.")
+        raise RuntimeError(f"Could not connect to {where}. {hint}") from exc
     except requests.exceptions.Timeout as exc:
         raise RuntimeError(
-            f"Ollama timed out after {OLLAMA_TIMEOUT} seconds. "
+            f"{where} timed out after {OLLAMA_TIMEOUT} seconds. "
             "Try a smaller image, a faster model, or increase OLLAMA_TIMEOUT."
         ) from exc
     except requests.exceptions.HTTPError as exc:
@@ -114,16 +210,41 @@ def _ollama_generate(prompt, images=None, response_format=None, model=None, num_
         except ValueError:
             detail = response.text.strip() if response.text else str(exc)
 
-        active_model = model or OLLAMA_MODEL
-        if "not found" in detail.lower() and active_model in detail:
-            detail = (
-                f"Model '{active_model}' is not installed in Ollama. "
-                f"Run 'ollama pull {active_model}' or select an installed model from the sidebar."
-            )
+        if response.status_code in (401, 403):
+            detail = f"{where} rejected the request (HTTP {response.status_code}). Check OLLAMA_API_KEY."
+        elif "not found" in detail.lower() and active_model in detail:
+            if OLLAMA_API_KEY:
+                detail = f"Model '{active_model}' isn't available on {where}. Select another model from the sidebar."
+            else:
+                detail = (
+                    f"Model '{active_model}' is not installed in Ollama. "
+                    f"Run 'ollama pull {active_model}' or select an installed model from the sidebar."
+                )
 
         raise RuntimeError(f"Ollama request failed: {detail}") from exc
     except ValueError as exc:
         raise RuntimeError("Ollama returned an invalid JSON response.") from exc
+
+    if not content:
+        raise RuntimeError("The model returned an empty response.")
+    return content
+
+
+def _use_ai():
+    return get_ai_status()["mode"] != "offline"
+
+
+def _fallback_notice(what, error):
+    st.warning(
+        f"⚠️ Couldn't create the {what} with the AI model: {error} "
+        "Showing offline results built from the text in your photos instead."
+    )
+
+
+def _offline_result(result, language):
+    if result is None:
+        st.warning(f"📴 {offline_mode.unreadable_message(language)}")
+    return result
 
 # ============== NOTE GENERATOR ==============
 def note_generator(images, language="Bengali", model=None):
@@ -151,11 +272,12 @@ def note_generator(images, language="Bengali", model=None):
         Use markdown for clarity and proper formatting.
         Use **bold text** for section titles. Do not use '#' heading syntax."""
     
-    try:
-        return _ollama_generate(prompt, images, model=model, num_predict=500)
-    except Exception as e:
-        st.error(f"❌ Error generating notes: {str(e)}")
-        return "Unable to generate notes. Please try again."
+    if _use_ai():
+        try:
+            return _ollama_generate(prompt, images, model=model, num_predict=500)
+        except Exception as e:
+            _fallback_notice("notes", e)
+    return _offline_result(offline_mode.notes(images, language), language)
 
 # ============== AUDIO TRANSCRIPTION ==============
 def audio_transcription(text, language="Bengali"):
@@ -234,11 +356,12 @@ Format exactly:
 }}
 Make questions clear, options plausible, and explanations educational."""
 
-    try:
-        return _ollama_generate(prompt, images, response_format="json", model=model, num_predict=1100)
-    except Exception as e:
-        st.error(f"❌ Error generating quiz: {str(e)}")
-        return None
+    if _use_ai():
+        try:
+            return _ollama_generate(prompt, images, response_format="json", model=model, num_predict=1100)
+        except Exception as e:
+            _fallback_notice("quiz", e)
+    return _offline_result(offline_mode.quiz(images, difficulty, language), language)
 
 # ============== ADDITIONAL FEATURES ==============
 
@@ -261,11 +384,12 @@ def flashcard_generator(images, language="Bengali", model=None):
         
         Make them concise and perfect for studying."""
     
-    try:
-        return _ollama_generate(prompt, images, model=model, num_predict=600)
-    except Exception as e:
-        st.error(f"❌ Error generating flashcards: {str(e)}")
-        return None
+    if _use_ai():
+        try:
+            return _ollama_generate(prompt, images, model=model, num_predict=600)
+        except Exception as e:
+            _fallback_notice("flashcards", e)
+    return _offline_result(offline_mode.flashcards(images, language), language)
 
 def key_points_extractor(images, language="Bengali", model=None):
     """
@@ -288,11 +412,12 @@ def key_points_extractor(images, language="Bengali", model=None):
         
         Keep it concise and organized."""
     
-    try:
-        return _ollama_generate(prompt, images, model=model, num_predict=500)
-    except Exception as e:
-        st.error(f"❌ Error extracting key points: {str(e)}")
-        return None
+    if _use_ai():
+        try:
+            return _ollama_generate(prompt, images, model=model, num_predict=500)
+        except Exception as e:
+            _fallback_notice("key points", e)
+    return _offline_result(offline_mode.key_points(images, language), language)
 
 def extract_correct_answers(quiz_content):
     """

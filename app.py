@@ -1,5 +1,5 @@
 import streamlit as st
-from api_calling import OLLAMA_MODEL, get_ollama_models, note_generator, audio_transcription, quiz_generator, flashcard_generator, key_points_extractor, extract_correct_answers, parse_quiz_json
+from api_calling import OLLAMA_MODEL, DEFAULT_CLOUD_MODEL, get_ai_status, normalize_model_name, note_generator, audio_transcription, quiz_generator, flashcard_generator, key_points_extractor, extract_correct_answers, parse_quiz_json
 from PIL import Image
 import re
 
@@ -325,12 +325,30 @@ with st.sidebar:
     st.session_state.language = "Bengali" if "Bengali" in language_option else "English"
 
     st.subheader("Ollama Model")
-    available_models = get_ollama_models()
-    current_model = st.session_state.ollama_model or OLLAMA_MODEL
+    ai_status = get_ai_status()
+    available_models = ai_status["models"]
+    current_model = normalize_model_name(st.session_state.ollama_model or OLLAMA_MODEL)
+    server_name = "Ollama Cloud" if ai_status["is_ollama_cloud"] else ai_status["host"]
 
-    if available_models:
+    if ai_status["mode"] == "cloud":
+        st.success(f"☁️ Connected to {server_name}")
+    elif ai_status["mode"] == "offline":
+        if ai_status["key_configured"]:
+            st.warning(f"Couldn't reach {server_name} ({ai_status['error']}). Using offline mode for now.")
+        st.info(
+            "📴 **Offline mode** — no AI model is connected, so NoteAI reads the text in your "
+            "photos on this device and builds the notes, quiz and flashcards from it. Add an "
+            "Ollama Cloud key (`OLLAMA_API_KEY`) or start Ollama locally for full AI analysis."
+        )
+        if not ai_status["ocr"]:
+            st.caption("Offline reading needs Tesseract OCR, which isn't installed here.")
+
+    if ai_status["mode"] == "offline":
+        pass  # nothing to pick until a model is reachable
+    elif available_models:
         preferred_candidates = [
             OLLAMA_MODEL,
+            DEFAULT_CLOUD_MODEL,
             "minicpm-v:latest",
             "minicpm-v",
             "moondream:latest",
@@ -341,7 +359,7 @@ with st.sidebar:
             "bakllava",
         ]
         preferred_model = next((name for name in preferred_candidates if name in available_models), None)
-        vision_markers = ("moondream", "llava", "bakllava", "minicpm", "qwen2.5vl", "gemma3")
+        vision_markers = ("moondream", "llava", "bakllava", "minicpm", "qwen2.5vl", "qwen3-vl", "gemma3", "gemma4", "llama4", "mistral-small3")
         selected_model_looks_visual = any(marker in current_model.lower() for marker in vision_markers)
 
         if preferred_model and (current_model not in available_models or not selected_model_looks_visual):
@@ -354,7 +372,7 @@ with st.sidebar:
             st.session_state.ollama_model = current_model
 
         st.session_state.ollama_model = st.selectbox(
-            "Select Local Model",
+            "Select Cloud Model" if ai_status["mode"] == "cloud" else "Select Local Model",
             available_models,
             index=available_models.index(current_model),
             help="Use a vision-capable Ollama model for uploaded note images."
@@ -484,6 +502,13 @@ if pressed:
 if st.session_state.content_generated:
     difficulty_label = st.session_state.difficulty_label
     difficulty = difficulty_label.split()[-1]
+
+    if ai_status["mode"] == "offline":
+        st.info(
+            "📴 **Offline mode:** these results were built on this device from the text in your "
+            "photos, without an AI model. Handwriting, diagrams and formulas may not be read "
+            "accurately — add an Ollama Cloud key or run Ollama locally for full AI analysis."
+        )
 
     # Create tabs for better organization
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Notes Summary", "🔊 Audio", "🧠 Quiz", "📇 Flashcards", "⭐ Key Points"])
