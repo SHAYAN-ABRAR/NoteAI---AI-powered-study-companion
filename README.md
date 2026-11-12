@@ -10,6 +10,12 @@ Runs on Ollama Cloud, on a local Ollama model, or fully offline — nothing to s
 ![Ollama](https://img.shields.io/badge/Ollama-cloud%20%7C%20local-000000?logo=ollama&logoColor=white)
 ![Languages](https://img.shields.io/badge/%F0%9F%87%A7%F0%9F%87%A9%20Bengali%20%7C%20%F0%9F%87%AC%F0%9F%87%A7%20English-bilingual-8B5CF6)
 
+<p align="center">
+  <img src="docs/media/demo.webp" width="720" alt="NoteAI walkthrough: upload a page of notes and generate a summary, quiz and flashcards" />
+  <br/>
+  <sub>Recorded from the <a href="https://note-ai-io.streamlit.app/">live demo</a> in offline mode: upload a page of notes, pick a difficulty, generate the study materials.</sub>
+</p>
+
 </div>
 
 ---
