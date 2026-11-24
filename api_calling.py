@@ -236,14 +236,14 @@ def _use_ai():
 
 def _fallback_notice(what, error):
     st.warning(
-        f"⚠️ Couldn't create the {what} with the AI model: {error} "
+        f"Couldn't create the {what} with the AI model: {error} "
         "Showing offline results built from the text in your photos instead."
     )
 
 
 def _offline_result(result, language):
     if result is None:
-        st.warning(f"📴 {offline_mode.unreadable_message(language)}")
+        st.warning(offline_mode.unreadable_message(language))
     return result
 
 # ============== NOTE GENERATOR ==============
@@ -292,7 +292,7 @@ def audio_transcription(text, language="Bengali"):
         audio_buffer.seek(0)
         return audio_buffer
     except Exception as e:
-        st.error(f"❌ Error generating audio: {str(e)}")
+        st.error(f"Error generating audio: {str(e)}")
         return None
 
 # ============== QUIZ GENERATOR ==============
@@ -456,5 +456,5 @@ def parse_quiz_json(raw_text):
         data = json.loads(cleaned)
         return data.get("questions", [])[:5]  # ensure exactly 5 questions
     except Exception as e:
-        st.error(f"❌ JSON parsing failed: {str(e)}")
+        st.error(f"JSON parsing failed: {str(e)}")
         return []

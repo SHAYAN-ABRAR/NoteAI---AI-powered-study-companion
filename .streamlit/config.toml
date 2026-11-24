@@ -1,6 +1,40 @@
+[server]
+# Serves ./static so the app's own font and icon load without a third-party request
+# (and keep working in offline mode).
+enableStaticServing = true
+
 [theme]
-base = "dark"
-primaryColor = "#8B5CF6"
-backgroundColor = "#07090F"
-secondaryBackgroundColor = "#0D1220"
-textColor = "#E5E7EB"
+base = "light"
+primaryColor = "#2A3FAE"            # ballpoint blue: buttons, selection, focus
+backgroundColor = "#FFFFFF"         # the page
+secondaryBackgroundColor = "#EFF2F7"
+textColor = "#18213F"               # blue-black ink
+borderColor = "#C9D5E8"             # ruled-line blue
+showWidgetBorder = true
+showSidebarBorder = true
+linkColor = "#2A3FAE"
+redColor = "#CC3340"                # red pen
+greenColor = "#2E7D4F"
+blueColor = "#2A3FAE"
+blueBackgroundColor = "#EFF2F7"     # info notes sit on blotter grey, in ink
+blueTextColor = "#18213F"
+yellowColor = "#B88A00"
+codeTextColor = "#18213F"
+codeBackgroundColor = "#EFF2F7"
+font = "Anek Bangla, sans-serif"
+headingFont = "Anek Bangla, sans-serif"
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+baseFontSize = 16
+baseRadius = "8px"
+buttonRadius = "8px"
+
+# Anek Bangla by Ek Type (SIL Open Font License, see static/fonts/OFL.txt).
+# One family covers Bengali and Latin, so both languages share the same colour on the page.
+[[theme.fontFaces]]
+family = "Anek Bangla"
+url = "app/static/fonts/AnekBangla-Variable.woff2"
+weight = "100 800"
+
+[theme.sidebar]
+backgroundColor = "#EFF2F7"
+secondaryBackgroundColor = "#FFFFFF"
